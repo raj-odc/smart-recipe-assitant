@@ -8,10 +8,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToast } from "@/hooks/use-toast"
 import { useMobile } from "@/hooks/use-mobile"
-import { Send, ChefHat, Camera, Mail, Download, Loader2, LogOut } from "lucide-react"
+import { Send, ChefHat, Camera, Mail, Download, Loader2, LogOut, AlertCircle } from "lucide-react"
 import { useAuth } from "@/contexts/auth-context"
 import { signOut } from "@/lib/auth-service"
 import { getFeaturedRecipes, getRecipesByDietaryTags } from "@/lib/recipe-service"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 
 import { RecipeCard } from "@/components/recipe-card"
 import { UserPreferences } from "@/components/user-preferences"
@@ -63,6 +64,14 @@ export function RecipeAssistant() {
           "👋 Hi there! I'm your Smart Recipe Assistant. I can help you plan meals based on your dietary preferences, pantry items, and budget. What kind of recipes are you looking for today?",
       },
     ],
+    onError: (error) => {
+      console.error("Chat error:", error)
+      toast({
+        title: "Chat Error",
+        description: error.message || "Failed to communicate with the recipe assistant",
+        variant: "destructive",
+      })
+    },
   })
 
   // Load featured recipes on initial load
@@ -75,13 +84,18 @@ export function RecipeAssistant() {
         setRecipes(featuredRecipes)
       } else if (error) {
         console.error("Error loading featured recipes:", error)
+        toast({
+          title: "Error Loading Recipes",
+          description: error,
+          variant: "destructive",
+        })
       }
 
       setLoading(false)
     }
 
     loadFeaturedRecipes()
-  }, [])
+  }, [toast])
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -201,6 +215,15 @@ export function RecipeAssistant() {
             <TabsContent value="chat" className="flex-1 flex flex-col overflow-hidden">
               <ScrollArea className="flex-1 p-4">
                 <div className="space-y-4 max-w-3xl mx-auto">
+                  {error && (
+                    <Alert variant="destructive" className="mb-4">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        Error connecting to the recipe assistant. Please try again later.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
                   {messages.map((message) => (
                     <div
                       key={message.id}
@@ -221,7 +244,7 @@ export function RecipeAssistant() {
                                 <div className="flex justify-center py-4">
                                   <Loader2 className="h-8 w-8 animate-spin text-emerald-500" />
                                 </div>
-                              ) : (
+                              ) : recipes.length > 0 ? (
                                 recipes.map((recipe) => (
                                   <RecipeCard
                                     key={recipe.id}
@@ -229,6 +252,10 @@ export function RecipeAssistant() {
                                     onClick={() => handleRecipeClick(recipe)}
                                   />
                                 ))
+                              ) : (
+                                <div className="text-center py-2 text-sm text-muted-foreground">
+                                  No matching recipes found. Try different criteria.
+                                </div>
                               )}
                             </div>
                           )}
