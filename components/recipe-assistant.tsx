@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useState, useRef, useEffect } from "react"
 import { useChat } from "@ai-sdk/react"
 import { Button } from "@/components/ui/button"
@@ -8,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToast } from "@/hooks/use-toast"
 import { useMobile } from "@/hooks/use-mobile"
-import { Send, ChefHat, Camera, Mail, Download, Loader2, LogOut, AlertCircle } from "lucide-react"
+import { Send, ChefHat, Camera, Mail, Download, Loader2, LogOut, AlertCircle, RefreshCw } from "lucide-react"
 import { useAuth } from "@/contexts/auth-context"
 import { signOut } from "@/lib/auth-service"
 import { getFeaturedRecipes, getRecipesByDietaryTags } from "@/lib/recipe-service"
@@ -49,12 +51,19 @@ export function RecipeAssistant() {
   const [showPreferences, setShowPreferences] = useState(false)
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [loading, setLoading] = useState(false)
+  const [apiKeyVerified, setApiKeyVerified] = useState(true)
+  const [retryCount, setRetryCount] = useState(0)
+  const [verifyingApiKey, setVerifyingApiKey] = useState(false) // Start as false to avoid initial loading state
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
   const isMobile = useMobile()
   const { user, userData } = useAuth()
 
-  const { messages, input, handleInputChange, handleSubmit, isLoading, error } = useChat({
+  // Determine if we're in development mode
+  const isDevelopment = process.env.NODE_ENV === "development"
+
+  const { messages, input, handleInputChange, handleSubmit, isLoading, error, reload } = useChat({
     api: "/api/chat",
     initialMessages: [
       {
@@ -66,6 +75,12 @@ export function RecipeAssistant() {
     ],
     onError: (error) => {
       console.error("Chat error:", error)
+
+      // Check if it's an API key issue
+      if (error.message?.includes("API key") || error.message?.includes("401")) {
+        setApiKeyVerified(false)
+      }
+
       toast({
         title: "Chat Error",
         description: error.message || "Failed to communicate with the recipe assistant",
@@ -74,24 +89,95 @@ export function RecipeAssistant() {
     },
   })
 
+  // Verify OpenAI API key on initial load - but skip in development mode
+  useEffect(() => {
+    // In development mode, we'll assume the API key is valid
+    if (isDevelopment) {
+      console.log("Development mode: Skipping API key verification")
+      setApiKeyVerified(true)
+      setVerifyingApiKey(false)
+      return
+    }
+
+    const verifyApiKey = async () => {
+      setVerifyingApiKey(true)
+      setApiKeyError(null)
+
+      try {
+        console.log("Verifying OpenAI API key...")
+        const response = await fetch("/api/test-openai")
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          console.error("API key verification failed with status:", response.status, errorText)
+          setApiKeyVerified(false)
+          setApiKeyError(`API verification failed: ${response.status} ${response.statusText}`)
+          return
+        }
+
+        let data
+        try {
+          data = await response.json()
+        } catch (parseError) {
+          console.error("Failed to parse API verification response:", parseError)
+          setApiKeyVerified(false)
+          setApiKeyError("Failed to parse API verification response")
+          return
+        }
+
+        console.log("API key verification response:", data)
+
+        if (data && data.success) {
+          console.log("API key verified successfully")
+          setApiKeyVerified(true)
+        } else {
+          console.error("API key verification failed:", data?.error || "Unknown error")
+          setApiKeyVerified(false)
+          setApiKeyError(data?.error || "Unknown API key error")
+
+          toast({
+            title: "API Key Error",
+            description: data?.error || "The OpenAI API key is invalid or not configured properly.",
+            variant: "destructive",
+          })
+        }
+      } catch (error: any) {
+        console.error("Error verifying API key:", error)
+        // Don't set apiKeyVerified to false on network errors in development
+        if (!isDevelopment) {
+          setApiKeyVerified(false)
+        }
+        setApiKeyError(`Error checking API key: ${error.message || "Unknown error"}`)
+      } finally {
+        setVerifyingApiKey(false)
+      }
+    }
+
+    verifyApiKey()
+  }, [toast, retryCount, isDevelopment])
+
   // Load featured recipes on initial load
   useEffect(() => {
     const loadFeaturedRecipes = async () => {
       setLoading(true)
-      const { success, recipes: featuredRecipes, error } = await getFeaturedRecipes(3)
+      try {
+        const { success, recipes: featuredRecipes, error } = await getFeaturedRecipes(3)
 
-      if (success && featuredRecipes) {
-        setRecipes(featuredRecipes)
-      } else if (error) {
-        console.error("Error loading featured recipes:", error)
-        toast({
-          title: "Error Loading Recipes",
-          description: error,
-          variant: "destructive",
-        })
+        if (success && featuredRecipes) {
+          setRecipes(featuredRecipes)
+        } else if (error) {
+          console.error("Error loading featured recipes:", error)
+          toast({
+            title: "Error Loading Recipes",
+            description: error,
+            variant: "destructive",
+          })
+        }
+      } catch (error) {
+        console.error("Error in loadFeaturedRecipes:", error)
+      } finally {
+        setLoading(false)
       }
-
-      setLoading(false)
     }
 
     loadFeaturedRecipes()
@@ -125,18 +211,23 @@ export function RecipeAssistant() {
           )
 
           setLoading(true)
-          const { success, recipes: suggestedRecipes, error } = await getRecipesByDietaryTags(dietaryTags)
+          try {
+            const { success, recipes: suggestedRecipes, error } = await getRecipesByDietaryTags(dietaryTags)
 
-          if (success && suggestedRecipes && suggestedRecipes.length > 0) {
-            setRecipes(suggestedRecipes)
-          } else {
-            // Fallback to featured recipes if no matches
-            const { success, recipes: featuredRecipes } = await getFeaturedRecipes(3)
-            if (success && featuredRecipes) {
-              setRecipes(featuredRecipes)
+            if (success && suggestedRecipes && suggestedRecipes.length > 0) {
+              setRecipes(suggestedRecipes)
+            } else {
+              // Fallback to featured recipes if no matches
+              const { success, recipes: featuredRecipes } = await getFeaturedRecipes(3)
+              if (success && featuredRecipes) {
+                setRecipes(featuredRecipes)
+              }
             }
+          } catch (error) {
+            console.error("Error in checkForRecipeSuggestions:", error)
+          } finally {
+            setLoading(false)
           }
-          setLoading(false)
         }
       }
     }
@@ -170,6 +261,29 @@ export function RecipeAssistant() {
       description: "You have been signed out successfully.",
     })
   }
+
+  const handleRetryApiKey = () => {
+    setRetryCount((prev) => prev + 1)
+  }
+
+  const handleSubmitWithFallback = (e: React.FormEvent) => {
+    e.preventDefault()
+
+    // In development mode, always allow submission
+    if (!isDevelopment && !apiKeyVerified && !verifyingApiKey) {
+      toast({
+        title: "API Key Error",
+        description: apiKeyError || "Cannot send message: The OpenAI API key is not configured properly.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    handleSubmit(e)
+  }
+
+  // For development, allow chat even if API key verification fails
+  const shouldDisableChat = !isDevelopment && !apiKeyVerified && !verifyingApiKey
 
   return (
     <div className="flex flex-col h-screen max-h-screen">
@@ -215,11 +329,46 @@ export function RecipeAssistant() {
             <TabsContent value="chat" className="flex-1 flex flex-col overflow-hidden">
               <ScrollArea className="flex-1 p-4">
                 <div className="space-y-4 max-w-3xl mx-auto">
+                  {isDevelopment && (
+                    <Alert className="mb-4">
+                      <AlertDescription>
+                        Development mode: API key verification bypassed. Chat functionality will work regardless of API
+                        key status.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {verifyingApiKey && !isDevelopment && (
+                    <Alert className="mb-4">
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      <AlertDescription>Verifying OpenAI API key...</AlertDescription>
+                    </Alert>
+                  )}
+
+                  {!apiKeyVerified && !verifyingApiKey && !isDevelopment && (
+                    <Alert variant="destructive" className="mb-4">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription className="flex justify-between items-center">
+                        <span>
+                          {apiKeyError || "OpenAI API key is invalid or not configured. Chat functionality is limited."}
+                        </span>
+                        <Button size="sm" variant="outline" onClick={handleRetryApiKey} className="ml-2">
+                          <RefreshCw className="h-3 w-3 mr-1" /> Retry
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
                   {error && (
                     <Alert variant="destructive" className="mb-4">
                       <AlertCircle className="h-4 w-4" />
-                      <AlertDescription>
-                        Error connecting to the recipe assistant. Please try again later.
+                      <AlertDescription className="flex justify-between items-center">
+                        <span>
+                          {error.message || "Error connecting to the recipe assistant. Please try again later."}
+                        </span>
+                        <Button size="sm" variant="outline" onClick={reload} className="ml-2">
+                          <RefreshCw className="h-3 w-3 mr-1" /> Retry
+                        </Button>
                       </AlertDescription>
                     </Alert>
                   )}
@@ -268,14 +417,14 @@ export function RecipeAssistant() {
 
               <div className="border-t bg-white p-4">
                 <div className="max-w-3xl mx-auto">
-                  <form onSubmit={handleSubmit} className="flex gap-2">
+                  <form onSubmit={handleSubmitWithFallback} className="flex gap-2">
                     <Input
                       value={input}
                       onChange={handleInputChange}
                       placeholder="Ask about recipes, meal plans, or dietary needs..."
-                      disabled={isLoading}
+                      disabled={isLoading || shouldDisableChat}
                     />
-                    <Button type="submit" disabled={isLoading || !input.trim()}>
+                    <Button type="submit" disabled={isLoading || !input.trim() || shouldDisableChat}>
                       {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                     </Button>
                     <Button type="button" variant="outline" disabled={isLoading}>
@@ -292,9 +441,11 @@ export function RecipeAssistant() {
                         <Download className="h-3 w-3 mr-1" /> Download PDF
                       </Button>
                     </div>
+                    {/* DEVELOPMENT MODE: Comment out the session timer
                     {userData && !userData.isPremium && (
                       <div className="text-xs text-muted-foreground">Free session: 30 seconds remaining</div>
                     )}
+                    */}
                   </div>
                 </div>
               </div>

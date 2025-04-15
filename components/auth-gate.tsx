@@ -28,60 +28,87 @@ export function AuthGate({ children }: AuthGateProps) {
   const [authTab, setAuthTab] = useState<"login" | "register">("login")
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [authError, setAuthError] = useState<string | null>(null)
+  const [localAuthError, setLocalAuthError] = useState<string | null>(null)
   const { toast } = useToast()
-  const { user, userData, loading } = useAuth()
+  const { user, userData, loading, authError, setAuthError } = useAuth()
+
+  // Debug logging
+  useEffect(() => {
+    console.log("AuthGate state:", {
+      user: user ? `${user.email} (${user.uid})` : "null",
+      loading,
+      isAuthenticated,
+      showAd,
+    })
+  }, [user, loading, isAuthenticated, showAd])
 
   // Clear error when switching tabs
   useEffect(() => {
+    setLocalAuthError(null)
     setAuthError(null)
-  }, [authTab])
+  }, [authTab, setAuthError])
+
+  // Check authentication status when user changes
+  useEffect(() => {
+    if (!loading && user) {
+      console.log("User is authenticated, checking session eligibility")
+      checkSessionEligibility()
+    }
+  }, [user, loading]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Check if user can start a new session
-  useEffect(() => {
-    const checkSession = async () => {
-      if (user) {
-        const { canStart, error, nextSessionDate } = await canStartNewSession(user.uid)
+  const checkSessionEligibility = async () => {
+    if (!user) return
 
-        if (canStart) {
-          setShowAd(true)
-        } else if (error) {
+    try {
+      console.log("Checking if user can start a session")
+      const { canStart, error, nextSessionDate } = await canStartNewSession(user.uid)
+
+      if (canStart) {
+        console.log("User can start a session, showing ad")
+        setShowAd(true)
+      } else if (error) {
+        console.log("User cannot start a session:", error)
+        toast({
+          title: "Session Limit Reached",
+          description: error,
+          variant: "destructive",
+        })
+
+        if (nextSessionDate) {
+          const formattedDate = new Intl.DateTimeFormat("en-US", {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "numeric",
+          }).format(nextSessionDate)
+
           toast({
-            title: "Session Limit Reached",
-            description: error,
-            variant: "destructive",
+            title: "Next Available Session",
+            description: `You can start a new session on ${formattedDate}`,
           })
-
-          if (nextSessionDate) {
-            const formattedDate = new Intl.DateTimeFormat("en-US", {
-              month: "short",
-              day: "numeric",
-              hour: "numeric",
-              minute: "numeric",
-            }).format(nextSessionDate)
-
-            toast({
-              title: "Next Available Session",
-              description: `You can start a new session on ${formattedDate}`,
-            })
-          }
         }
       }
+    } catch (error) {
+      console.error("Error checking session eligibility:", error)
+      toast({
+        title: "Error",
+        description: "Failed to check session eligibility",
+        variant: "destructive",
+      })
     }
-
-    if (!loading && user) {
-      checkSession()
-    }
-  }, [user, loading, toast])
+  }
 
   // Ad timer countdown
   useEffect(() => {
     if (showAd && !adCompleted) {
+      console.log("Starting ad countdown")
       const timer = setInterval(() => {
         setAdTimer((prev) => {
           if (prev <= 1) {
             clearInterval(timer)
             setAdCompleted(true)
+            console.log("Ad completed")
             return 0
           }
           return prev - 1
@@ -94,24 +121,34 @@ export function AuthGate({ children }: AuthGateProps) {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
+    setLocalAuthError(null)
     setAuthError(null)
     setIsSubmitting(true)
 
     if (!email || !password) {
-      setAuthError("Please provide your email and password")
+      setLocalAuthError("Please provide your email and password")
       setIsSubmitting(false)
       return
     }
 
-    const { success, error } = await signIn(email, password)
+    try {
+      console.log("Attempting to sign in with email:", email)
+      const { success, error } = await signIn(email, password)
 
-    if (success) {
-      toast({
-        title: "Login Successful",
-        description: "Welcome back to the Recipe Assistant!",
-      })
-    } else {
-      setAuthError(error)
+      if (success) {
+        console.log("Sign in successful")
+        toast({
+          title: "Login Successful",
+          description: "Welcome back to the Recipe Assistant!",
+        })
+        // Auth state listener will handle the rest
+      } else {
+        console.error("Sign in failed:", error)
+        setLocalAuthError(error)
+      }
+    } catch (error: any) {
+      console.error("Sign in error:", error)
+      setLocalAuthError(error.message || "An unexpected error occurred")
     }
 
     setIsSubmitting(false)
@@ -119,30 +156,40 @@ export function AuthGate({ children }: AuthGateProps) {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
+    setLocalAuthError(null)
     setAuthError(null)
     setIsSubmitting(true)
 
     if (!email || !password) {
-      setAuthError("Please provide your email and password")
+      setLocalAuthError("Please provide your email and password")
       setIsSubmitting(false)
       return
     }
 
     if (!acceptTerms) {
-      setAuthError("Please accept the terms to continue")
+      setLocalAuthError("Please accept the terms to continue")
       setIsSubmitting(false)
       return
     }
 
-    const { success, error } = await registerUser(email, password)
+    try {
+      console.log("Attempting to register with email:", email)
+      const { success, error } = await registerUser(email, password)
 
-    if (success) {
-      toast({
-        title: "Registration Successful",
-        description: "Your account has been created. Welcome to the Recipe Assistant!",
-      })
-    } else {
-      setAuthError(error)
+      if (success) {
+        console.log("Registration successful")
+        toast({
+          title: "Registration Successful",
+          description: "Your account has been created. Welcome to the Recipe Assistant!",
+        })
+        // Auth state listener will handle the rest
+      } else {
+        console.error("Registration failed:", error)
+        setLocalAuthError(error)
+      }
+    } catch (error: any) {
+      console.error("Registration error:", error)
+      setLocalAuthError(error.message || "An unexpected error occurred")
     }
 
     setIsSubmitting(false)
@@ -150,24 +197,39 @@ export function AuthGate({ children }: AuthGateProps) {
 
   const handleAdComplete = async () => {
     if (user) {
-      await recordSession(user.uid)
-    }
+      try {
+        console.log("Recording session for user")
+        await recordSession(user.uid)
+        setIsAuthenticated(true)
+        console.log("User is now authenticated and can access the app")
 
-    setIsAuthenticated(true)
-
-    // Set session timeout (30 seconds for free users)
-    if (userData && !userData.isPremium) {
-      setTimeout(() => {
+        // DEVELOPMENT MODE: Comment out the session timeout for free users
+        /* 
+        // Set session timeout (30 seconds for free users)
+        if (userData && !userData.isPremium) {
+          setTimeout(() => {
+            toast({
+              title: "Session Expired",
+              description: "Your free session has expired. Please come back next week for another session.",
+              variant: "destructive",
+            })
+            setIsAuthenticated(false)
+            console.log("Free session expired")
+          }, 30 * 1000)
+        }
+        */
+      } catch (error) {
+        console.error("Error recording session:", error)
         toast({
-          title: "Session Expired",
-          description: "Your free session has expired. Please come back next week for another session.",
+          title: "Error",
+          description: "Failed to start your session",
           variant: "destructive",
         })
-        setIsAuthenticated(false)
-      }, 30 * 1000)
+      }
     }
   }
 
+  // Show loading state
   if (loading) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center p-4">
@@ -183,10 +245,12 @@ export function AuthGate({ children }: AuthGateProps) {
     )
   }
 
+  // If authenticated, show the app
   if (isAuthenticated) {
     return <>{children}</>
   }
 
+  // If user is logged in but hasn't seen the ad yet
   if (user && showAd) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center p-4">
@@ -212,6 +276,7 @@ export function AuthGate({ children }: AuthGateProps) {
     )
   }
 
+  // If not authenticated, show login/register form
   return (
     <div className="flex min-h-screen flex-col items-center justify-center p-4">
       <Card className="w-full max-w-md">
@@ -225,10 +290,10 @@ export function AuthGate({ children }: AuthGateProps) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {authError && (
+          {(localAuthError || authError) && (
             <Alert variant="destructive" className="mb-4">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{authError}</AlertDescription>
+              <AlertDescription>{localAuthError || authError}</AlertDescription>
             </Alert>
           )}
 

@@ -61,8 +61,8 @@
     "ws": "latest",
     "firebase": "latest",
     "openai": "latest",
-    "ai": "latest",
-    "@ai-sdk/react": "latest"
+    "@ai-sdk/react": "latest",
+    "ai": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",

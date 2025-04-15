@@ -9,12 +9,16 @@ interface AuthContextType {
   user: User | null
   userData: any | null
   loading: boolean
+  authError: string | null
+  setAuthError: (error: string | null) => void
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   userData: null,
   loading: true,
+  authError: null,
+  setAuthError: () => {},
 })
 
 export const useAuth = () => useContext(AuthContext)
@@ -23,15 +27,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null)
   const [userData, setUserData] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
+  const [authError, setAuthError] = useState<string | null>(null)
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user)
+    console.log("Setting up auth state listener")
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      console.log("Auth state changed:", currentUser ? `User: ${currentUser.email}` : "No user")
+      setUser(currentUser)
 
-      if (user) {
-        const { success, userData } = await getUserData(user.uid)
-        if (success) {
-          setUserData(userData)
+      if (currentUser) {
+        try {
+          const { success, userData, error } = await getUserData(currentUser.uid)
+          if (success) {
+            console.log("User data loaded:", userData)
+            setUserData(userData)
+          } else {
+            console.error("Failed to load user data:", error)
+            setAuthError(`Failed to load user data: ${error}`)
+          }
+        } catch (error) {
+          console.error("Error fetching user data:", error)
+          setAuthError(`Error fetching user data: ${error}`)
         }
       } else {
         setUserData(null)
@@ -43,5 +59,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => unsubscribe()
   }, [])
 
-  return <AuthContext.Provider value={{ user, userData, loading }}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={{ user, userData, loading, authError, setAuthError }}>{children}</AuthContext.Provider>
+  )
 }
